@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+
+#
+# Reuters.
+#
+# @author  Christopher Barre (christophersimonbarre@gmail.com).
+# @version December 2020.
+
+# Scraper imports
+from urllib.request import Request, urlopen
+from bs4 import BeautifulSoup
+import unidecode
+import hashlib
+import re
+
+# My Libs imports
+from bip_scraper_lib import *
+
+# MongoDB import
+from pymongo import MongoClient
+
+# NLP imports
+import spacy
+import pandas
+import numpy
+import nltk
+import os
+import nltk.corpus
+from nltk.tokenize import word_tokenize
+from nltk.probability import FreqDist
+from nltk.stem import PorterStemmer
+from nltk import ne_chunk
+
+# Load English tokenizer, tagger, parser, NER and word vectors
+nlp = spacy.load("en_core_web_sm")
+
+# Connect to MongoDB
+client = MongoClient('mongodb://10.2.10.18:27017')
+database = client['chris']
+collection = database['news']
+
+# Scraper
+source  = 'Reuters'
+newsurl = 'https://uk.reuters.com/business'
+baseurl = 'https://uk.reuters.com/'
+
+def getTitle(headline):
+    title = headline.find("div",{'class':'story-content'}).find('h3',{'class':'story-title'}).string.strip()
+    return unidecode.unidecode(title)
+
+def getLink(baseurl, headline):
+    return baseurl + headline.find("div",{'class':'story-content'}).find('a')['href']
+
+headlines = getArticles(newsurl, source)
+
+for headline in headlines:
+
+    details={}
+    details['link'] = link = getLink(baseurl,headline)
+
+    details['title'] = getTitle(headline)
+
+    PageScan = getPage(link, source)
+
+    details['timestamp'] = getTimestamp(PageScan.find("meta",property="og:article:published_time")['content'],'%Y-%m-%dT%H:%M:%SZ')
+
+    details['source'] = source
+
+    details['text'] = getText(PageScan.find('article'))
+
+    details['docid'] = hashlib.md5(link.encode('utf-8')).hexdigest()
+
+    details['_id'] = details['docid']
+
+    # Push data to MongoDB
+    try:
+        collection.update_one({'_id':details['docid']}, {'$set':details}, upsert=True)
+    except:
+        print(f'[{source}] MongoDB: failed to index {details["docid"]} {details["timestamp"]} {link}.')
+
+    # Print all outputs
+    Output(details)
+
+    #NLP Tokenize
+    token = word_tokenize(details['text'])
+    print(token)
+    print()
+
+    # Finding frequency distinct in the text
+    fdist = FreqDist(token)
+    print(fdist)
+    print()
+
+    # Top 10 words
+    fdistl = fdist.most_common(10)
+    print(fdistl)
+    print()
+
+    # Stemming
+    pst = PorterStemmer()
+    pst.stem('begining')
+    print(pst.stem)
+
+    # # POS
+    # posText = word_tokenize(details['text'])
+    # for token in posText:
+    #     print(nltk.pos_tag([token]))
+
+    # Named entity recognition
+    tags = nltk.pos_tag(token)
+    chunk = ne_chunk(tags)
+    print(chunk)
+
+
+    print()
+    print()
+    print()
